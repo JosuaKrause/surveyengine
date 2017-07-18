@@ -19,8 +19,23 @@ import threading
 
 from quick_server import create_server, msg, setup_restart, Response, PreventDefaultResponse
 
+try:
+    unicode = unicode
+except NameError:
+    # python 3
+    str = str
+    unicode = str
+    bytes = bytes
+    basestring = (str, bytes)
+else:
+    # python 2
+    str = str
+    unicode = unicode
+    bytes = str
+    basestring = basestring
 
-__version__ = "0.0.1"
+
+__version__ = "0.0.2"
 
 
 def get_server(addr, port, full_spec, output):
@@ -93,7 +108,7 @@ def get_server(addr, port, full_spec, output):
                 write_token(token, tobj)
         pix = int(args["query"]["pix"])
         url = "?pix={0}&token={1}".format(pix + 1, token)
-        res, last_page = create_page(spec, pix, url, title)
+        res, last_page = create_page(spec, pix, url, token, title)
         if last_page:
             msg("{0} finished!", token)
         return Response(res, ctype="text/html")
@@ -136,45 +151,48 @@ def get_rev_file(new_name):
 
 def dry_run(spec):
     for (pix, s) in enumerate(spec):
-        create_page(spec, pix, "NOPE", "DRY")
+        create_page(spec, pix, "NOPE", "ANON", "DRY")
 
 
-def create_page(spec, pix, url, title):
+def create_page(spec, pix, url, token, title):
     p = spec[pix]
-    pt = p["type"]
-    var = p["vars"]
-    pid = p.get("pid", "p{0}".format(pix)).format(**var)
+    pt = p.get("type", "plain")
+    var = p["vars"].copy()
+    var["_token"] = token
+
+    def f(s):
+        return str(s).format(**var)
+
+    pid = f(p.get("pid", "p{0}".format(pix)))
     content = ""
-    if pt == 'text':
-        for l in p["lines"]:
-            content += "<p>{0}</p>".format(l.format(**var))
-    elif pt == 'img':
-        content += """<img src="img/{0}" style="text-align: center;">""".format(
-                                            get_file(p["file"].format(**var)))
-        for l in p.get("lines", []):
-            content += "<p>{0}</p>".format(l.format(**var))
-    elif pt == 'input':
-        for line in p["lines"]:
-            lid, text, lt = line
-            content += "<p>{0}</p>".format(text.format(**var))
-            if lt == 'likert':
-                content += "<p style=\"text-align: center; white-space: nowrap;\">"
-                for v in range(5):
-                    content += """
-                    <input name="{0}" type="radio" value="{1}"{2}></input>
-                    <label for="{0}">{1}</label>""".format(
-                            lid,
-                            v - 2,
-                            " checked=\"checked\"" if v == 2 else ""
-                        )
-                content += "</p>"
-            elif lt == 'text':
-                pass
-            else:
-                raise ValueError("unknown line type: '{0}'".format(lt))
-    else:
+    if pt != 'plain':
         raise ValueError("unknown type: '{0}'".format(pt))
-    con = p["continue"]
+    for line in p["lines"]:
+        if isinstance(line, basestring):
+            content += "<p>{0}</p>".format(f(line))
+            continue
+        lt, text, lid = line
+        if lt == 'img':
+            content += """<img src="img/{0}" style="text-align: center;">""".format(
+                                            get_file(f(text)))
+            continue
+        content += "<p>{0}</p>".format(f(text))
+        if lt == 'likert':
+            content += "<p style=\"text-align: center; white-space: nowrap;\">"
+            for v in range(5):
+                content += """
+                <input name="{0}" type="radio" value="{1}"{2}></input>
+                <label for="{0}">{1}</label>""".format(
+                        lid,
+                        v - 2,
+                        " checked=\"checked\"" if v == 2 else ""
+                    )
+            content += "</p>"
+        elif lt == 'text':
+            pass
+        else:
+            raise ValueError("unknown line type: '{0}'".format(lt))
+    con = p.get("continue", "next")
     content += """<p></p><p style="text-align: center; white-space: nowrap;">"""
     last_page = False
     if con == 'end':
@@ -223,7 +241,7 @@ def create_page(spec, pix, url, title):
             }};
         </script>
     </body>
-    """.format(url, content, pid, ask_unload, title), last_page
+    """.format(url, content, pid, ask_unload, f(title)), last_page
 
 
 def read_spec(spec):
@@ -233,13 +251,15 @@ def read_spec(spec):
 
     def flatten(layer, variables):
         for p in layer["pages"]:
-            pt = p["type"]
+            pt = p.get("type", "plain")
             if pt == 'each':
-                name = p["name"]
-                for ix in range(p.get("from", 0), p["to"]):
-                    var = variables.copy()
-                    var[name] = ix
-                    for np in flatten(p, var):
+                var = p.get("vars", {})
+                var.update(variables)
+                name = p["name"].format(**var)
+                for ix in range(int(str(p.get("from", 0)).format(**var)), int(p["to"].format(**var))):
+                    cur_var = var.copy()
+                    cur_var[name] = ix
+                    for np in flatten(p, cur_var):
                         yield np
             else:
                 p = p.copy()

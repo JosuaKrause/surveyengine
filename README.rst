@@ -24,24 +24,29 @@ survey specification:
         "title": "Survey Title Here", // the survey title
         "pages": [ // a sequence of pages
             {
-                "type": "text", // a text page simply displays text
-                "lines": [ // the text that will be displayed
-                    "first line",
-                    "second line"
+                "lines": [
+                    "first line", // plain text that will be displayed
+                    "second line {foo}" // displays: second line bar
                 ],
-                "continue": "next", // creates a single button at the bottom
+                "vars": { // defines local variables
+                    "foo": "bar"
+                },
                 "pid": "start" // the id for the page (used as prefix in the result file)
+                "continue": "next", // creates a single button at the bottom -- default ("next") can be omitted
+                "type": "plain" // the type of page -- default ("plain") can be omitted
             }, {
                 "type": "each", // repeats a sequence of pages
                 "name": "ix", // the iteration variable name -- it can be used via {ix} in fields
-                "to": 25, // iterate until this number
+                "vars": { // defines local variables
+                    "img_len": 25 // we define the range as variable so we can use it in the text
+                },
+                "to": "{img_len}", // iterate until this number
                 "pages": [
                     // ... pages to repeat ...
                     {
-                        "type": "img", // an image page
-                        "file": "path/to/image{ix}.png", // the image to display
-                        "lines": [ // text displayed below the image
-                            "please answer"
+                        "lines": [
+                            "image {ix} / {img_len}", // displays: image 0 / 25
+                            [ "img", "path/to/image{ix}.png", "" ] // the image to display
                         ],
                         "pid": "question:{ix}" // the id for the page
                         "continue": "choice", // creates a collection of buttons at the bottom
@@ -53,18 +58,17 @@ survey specification:
                 ]
                 // this page type does not have a "continue" field
             }, {
-                "type": "input", // multiple questions
                 "lines": [
-                    // [ question_id, display_text, question_type ]
-                    [ "", "Just Text", "text" ], // simple text
-                    [ "fun", "Fun", "likert" ], // likert scale
-                    [ "conf", "Confidence", "likert" ]
+                    // other special lines
+                    // [ question_type, display_text, question_id ]
+                    [ "text", "just text", "" ], // simple text -- equivalent to "just text"
+                    [ "likert", "fun", "fun" ], // likert scale
+                    [ "likert", "confidence", "conf" ]
                 ],
-                "continue": "next",
+                "pid": "specials"
             }, {
-                "type": "text",
                 "lines": [
-                    "Thanks!"
+                    "Thanks! {_token}" // _token is a special variable containing the user id
                 ],
                 "continue": "end", // indicates the end of the survey -- this page must exist
                 "pid": "end"
