@@ -12,12 +12,15 @@ import threading
 
 from quick_server import create_server, msg, setup_restart, Response, PreventDefaultResponse
 
-def get_server(addr, port, spec, output):
+
+def get_server(addr, port, full_spec, output):
+    spec, title = full_spec
     server = create_server((addr, port))
 
     prefix = '/' + os.path.basename(os.path.normpath(server.base_path))
 
     server.link_empty_favicon_fallback()
+    server.favicon_everywhere = True
 
     server.suppress_noise = True
     server.report_slow_requests = True
@@ -40,6 +43,20 @@ def get_server(addr, port, spec, output):
             with open(os.path.join(output, "{0}.json".format(token)), 'w') as out:
                 json.dump(tobj, fp=out, sort_keys=True, indent=2)
 
+    @server.text_get(prefix + '/img/', 1)
+    def text_file(req, args):
+        new_name = args["paths"][0]
+        fname = get_rev_file(new_name)
+        if fname is None:
+            return None
+        with open(fname, 'r') as f_in:
+            ext = get_extension(fname)
+            mime = {
+                "svg": "svg+xml",
+                "jpg": "jpeg",
+            }.get(ext, ext)
+            return Response(f_in.read(), ctype='image/{0}'.format(mime))
+
     @server.text_get(prefix + '/', 0)
     def text_index(req, args):
         return post_index(req, args)
@@ -47,11 +64,12 @@ def get_server(addr, port, spec, output):
     @server.text_post(prefix + '/', 0)
     def post_index(req, args):
         if "token" not in args["query"]:
-            url = "{0}/?pix=0&token={1}".format(prefix, server.create_token())
-            req.send_response(307, "Ready to go!")
-            req.send_header("Location", url)
-            req.end_headers()
-            raise PreventDefaultResponse()
+            with token_lock:
+                url = "{0}/?pix=0&token={1}".format(prefix, server.create_token())
+                req.send_response(307, "Ready to go!")
+                req.send_header("Location", url)
+                req.end_headers()
+                raise PreventDefaultResponse()
         token = args["query"]["token"]
         if "post" in args:
             with token_lock:
@@ -65,28 +83,72 @@ def get_server(addr, port, spec, output):
                 write_token(token, tobj)
         pix = int(args["query"]["pix"])
         url = "?pix={0}&token={1}".format(pix + 1, token)
-        res, last_page = create_page(spec, pix, url)
+        res, last_page = create_page(spec, pix, url, title)
         if last_page:
             msg("{0} finished!", token)
         return Response(res, ctype="text/html")
 
+    dry_run(spec)
     return server, prefix
 
-def create_page(spec, pix, url):
+
+FILE_BASE = "."
+def set_file_base(fbase):
+    global FILE_BASE
+    FILE_BASE = fbase
+
+
+FILE_LOOKUP = {}
+FILE_REV_LOOKUP = {}
+FILE_NAME_IX = 0
+FILE_LOCK = threading.RLock()
+def get_file(fname):
+    global FILE_NAME_IX
+    fname = os.path.join(FILE_BASE, fname)
+    if fname not in FILE_LOOKUP:
+        if not os.path.exists(fname):
+            raise ValueError("cannot find file: '{0}'".format(fname))
+        with FILE_LOCK:
+            new_name = "{0}.{1}".format(FILE_NAME_IX, get_extension(fname))
+            FILE_NAME_IX += 1
+            FILE_LOOKUP[fname] = new_name
+            FILE_REV_LOOKUP[new_name] = fname
+    return FILE_LOOKUP[fname]
+
+
+def get_extension(fname):
+    ext_ix = fname.rfind('.')
+    return fname[ext_ix + 1:]
+
+def get_rev_file(new_name):
+    return FILE_REV_LOOKUP.get(new_name, None)
+
+
+def dry_run(spec):
+    for (pix, s) in enumerate(spec):
+        create_page(spec, pix, "NOPE", "DRY")
+
+
+def create_page(spec, pix, url, title):
     p = spec[pix]
     pt = p["type"]
     var = p["vars"]
     pid = p.get("pid", "p{0}".format(pix)).format(**var)
+    content = ""
     if pt == 'text':
-        content = "<p>{0}</p>".format(p["text"].format(**var))
+        for l in p["lines"]:
+            content += "<p>{0}</p>".format(l.format(**var))
     elif pt == 'img':
-        content = "<img src={0}>".format(p["file"].format(**var))
+        content += """<img src="img/{0}" style="text-align: center;">""".format(
+                                            get_file(p["file"].format(**var)))
+        for l in p.get("lines", []):
+            content += "<p>{0}</p>".format(l.format(**var))
     elif pt == 'input':
-        content = ""
         for line in p["lines"]:
             lid, text, lt = line
-            content += "<p>{0}</p><p>".format(text.format(**var))
+            content += "<p>{0}</p>".format(text.format(**var))
             if lt == 'likert':
+                content += "<p style=\"text-align: center; white-space: nowrap;\">"
                 for v in range(5):
                     content += """
                     <input name="{0}" type="radio" value="{1}"{2}></input>
@@ -95,13 +157,15 @@ def create_page(spec, pix, url):
                             v - 2,
                             " checked=\"checked\"" if v == 2 else ""
                         )
+                content += "</p>"
+            elif lt == 'text':
+                pass
             else:
                 raise ValueError("unknown line type: '{0}'".format(lt))
-            content += "</p>"
     else:
         raise ValueError("unknown type: '{0}'".format(pt))
     con = p["continue"]
-    content += "<p></p><p>"
+    content += """<p></p><p style="text-align: center; white-space: nowrap;">"""
     last_page = False
     if con == 'end':
         content += ""
@@ -115,18 +179,47 @@ def create_page(spec, pix, url):
     else:
         raise ValueError("unknown continue: '{0}'".format(con))
     content += "</p>"
+    ask_unload = """window.onbeforeunload = (e) => {
+            e.returnValue = "Data you have entered might not be saved. Continue closing?";
+            return e.returnValue;
+        }""" if not last_page else ""
     return """<!DOCTYPE html>
-    <body>
-        <form action="{0}" method="post">
-        {1}
-        <input type="hidden" value="{2}" name="_pid"></input>
-        </form>
+    <head>
+        <title>{4}</title>
+        <style>
+            * {{
+                box-sizing: border-box;
+                font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
+                font-size: 16px;
+                line-height: 1.42857143;
+            }}
+        </style>
+    </head>
+    <body style="height: 100vh; width: 100vw; margin: 0; padding: 0;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column;">
+            <div style="flex-grow: 0; flex-shrink: 0;">
+                <form id="main_form" action="{0}" method="post">
+                {1}
+                <input type="hidden" value="{2}" name="_pid"></input>
+                </form>
+            </div>
+            <div style="flex-grow: 0.5; flex-shrink: 1;">
+            </div>
+        </div>
+        <script>
+            {3}
+            document.getElementById("main_form").onsubmit = () => {{
+                window.onbeforeunload = null;
+            }};
+        </script>
     </body>
-    """.format(url, content, pid), last_page
+    """.format(url, content, pid, ask_unload, title), last_page
+
 
 def read_spec(spec):
     with open(spec, 'r') as sin:
         sobj = json.load(sin)
+    set_file_base(os.path.dirname(os.path.abspath(spec)))
 
     def flatten(layer, variables):
         for p in layer["pages"]:
@@ -145,7 +238,9 @@ def read_spec(spec):
                 p["vars"].update(variables)
                 yield p
 
-    return list(flatten(sobj, {}))
+    title = sobj.get("title", "Survey")
+    return list(flatten(sobj, {})), title
+
 
 if __name__ == '__main__':
     setup_restart()
