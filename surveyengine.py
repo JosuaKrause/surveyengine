@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Created on 2017-07-18
+
+@author: Joschi <josua.krause@gmail.com>
+
+This package provides a customizable survey user interface.
+"""
 from __future__ import print_function
 from __future__ import division
 
@@ -11,6 +18,9 @@ import argparse
 import threading
 
 from quick_server import create_server, msg, setup_restart, Response, PreventDefaultResponse
+
+
+__version__ = "0.0.1"
 
 
 def get_server(addr, port, full_spec, output):
