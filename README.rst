@@ -70,7 +70,7 @@ survey specification:
                 "pid": "specials"
             }, {
                 "lines": [
-                    "Thanks! {_token}" // _token is a special variable containing the user id
+                    "Thanks! {token}" // token is a special variable containing the user id
                 ],
                 "continue": "end", // indicates the end of the survey -- this page must exist
                 "pid": "end"
