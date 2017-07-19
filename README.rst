@@ -22,6 +22,7 @@ survey specification:
 
     {
         "title": "Survey Title Here", // the survey title
+        "urlbase": "survey", // the base URL of the survey
         "pages": [ // a sequence of pages
             {
                 "lines": [
@@ -49,7 +50,7 @@ survey specification:
                             "image {ix_next} / {img_len}", // displays: image 1 / 25
                             [ "img", "path/to/image{ix}.png", "" ] // the image to display
                         ],
-                        "pid": "question:{ix}" // the id for the page
+                        "pid": "question/{ix}" // the id for the page
                         "continue": "choice", // creates a collection of buttons at the bottom
                         "values": [ // the values to choose from
                             "yes",
