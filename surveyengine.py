@@ -39,10 +39,10 @@ __version__ = "0.0.3"
 
 
 def get_server(addr, port, full_spec, output):
-    spec, title = full_spec
+    spec, title, prefix = full_spec
     server = create_server((addr, port))
 
-    prefix = '/' + os.path.basename(os.path.normpath(server.base_path))
+    prefix = '/' + (os.path.basename(os.path.normpath(server.base_path)) if prefix is None else prefix)
 
     server.link_empty_favicon_fallback()
     server.favicon_everywhere = True
@@ -96,15 +96,15 @@ def get_server(addr, port, full_spec, output):
                 req.end_headers()
                 raise PreventDefaultResponse()
         token = args["query"]["token"]
-        if "post" in args:
-            with token_lock:
-                tobj = token_obj(token)
+        with token_lock:
+            tobj = token_obj(token)
+            if "post" in args:
 
                 def set_value(o, k, v):
-                    if ":" not in k:
+                    if "/" not in k:
                         o[k] = v
                         return
-                    kix = k.index(":")
+                    kix = k.index("/")
                     tmp = k[:kix]
                     if tmp not in o:
                         o[tmp] = {}
@@ -115,11 +115,13 @@ def get_server(addr, port, full_spec, output):
                 for (k, v) in pobj.items():
                     if k == "_pid":
                         continue
-                    set_value(tobj, "{0}:{1}".format(pid, k), v)
+                    if k.startswith("_nop"):
+                        continue
+                    set_value(tobj, "{0}/{1}".format(pid, k), v)
                 write_token(token, tobj)
         pix = int(args["query"]["pix"])
         url = "?pix={0}&token={1}".format(pix + 1, token)
-        res, _pid, last_page = create_page(spec, pix, url, token, title)
+        res, _pid, last_page = create_page(spec, pix, url, token, tobj, title)
         if last_page:
             msg("{0} finished!", token)
         return Response(res, ctype="text/html")
@@ -161,30 +163,48 @@ def get_rev_file(new_name):
 
 
 def dry_run(spec):
-    pids = set()
-    has_last_page = False
-    for (pix, s) in enumerate(spec):
-        _res, pid, last_page = create_page(spec, pix, "NOPE", "ANON", "DRY")
-        if not has_last_page: # only check reachable pages
-            if pid in pids:
-                raise ValueError("duplicate pid '{0}'".format(pid))
-            pids.add(pid)
-        if last_page:
-            has_last_page = True
-    if not has_last_page:
-        raise ValueError("survey has no last page!")
+    pass
+    # pids = set()
+    # has_last_page = False
+    # for (pix, s) in enumerate(spec):
+    #     _res, pid, last_page = create_page(spec, pix, "NOPE", "ANON", {}, "DRY")
+    #     if not has_last_page: # only check reachable pages
+    #         if pid in pids:
+    #             raise ValueError("duplicate pid '{0}'".format(pid))
+    #         pids.add(pid)
+    #     if last_page:
+    #         has_last_page = True
+    # if not has_last_page:
+    #     raise ValueError("survey has no last page!")
 
 
-def create_page(spec, pix, url, token, title):
+def create_page(spec, pix, url, token, tobj, title):
     p = spec[pix]
     pt = p.get("type", "plain")
     var = p["vars"].copy()
-    var["_token"] = token
+    var["token"] = token
 
     def f(s):
         return str(s).format(**var)
 
     pid = f(p.get("pid", "p{0}".format(pix)))
+
+    def flatten_items(tobj, prefix, query):
+        qu = query.split('/', 1) if query is not None else [ None ]
+        cq = qu[0]
+        fq = qu[1] if len(qu) > 1 else None
+        for (k, v) in tobj.items():
+            if cq is not None and k != cq:
+                continue
+            key = "{0}{1}".format(prefix, k) if cq is None else prefix
+            if isinstance(v, dict):
+                for ii in flatten_items(v, "{0}/".format(key) if key != prefix else key, fq):
+                    yield ii
+            else:
+                yield (key, v)
+
+    var.update(dict(flatten_items(tobj, "cur/", pid)))
+
     content = ""
     if pt != 'plain':
         raise ValueError("unknown type: '{0}'".format(pt))
@@ -220,11 +240,11 @@ def create_page(spec, pix, url, token, title):
         content += ""
         last_page = True
     elif con == 'next':
-        content += """<input type="submit" name="_res" value="Next"></input>""".format(url)
+        content += """<input type="submit" name="_nop_res" value="Next"></input>""".format(url)
         pass
     elif con == 'choice':
         for ch in p["values"]:
-            content += """<input type="submit" name="_res" value="{0}"></input>""".format(ch)
+            content += """<input type="submit" name="res" value="{0}"></input>""".format(ch)
     else:
         raise ValueError("unknown continue: '{0}'".format(con))
     content += "</p>"
@@ -304,7 +324,8 @@ def read_spec(spec):
                 yield p
 
     title = sobj.get("title", "Survey")
-    return list(flatten(sobj, {})), title
+    urlbase = sobj.get("urlbase", None)
+    return list(flatten(sobj, {})), title, urlbase
 
 
 if __name__ == '__main__':

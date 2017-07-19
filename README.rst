@@ -79,3 +79,4 @@ survey specification:
 
 Each user creates a result file with its unique token in the output folder.
 The result file is a JSON file containing all answers.
+Special variables: ``res``, ``token``, ``cur``
