@@ -37,6 +37,7 @@ survey specification:
             }, {
                 "type": "each", // repeats a sequence of pages
                 "name": "ix", // the iteration variable name -- it can be used via {ix} in fields
+                "name_next": "ix_next", // "name_next" and "name_prev" are optional variables containing the next / previous iteration
                 "vars": { // defines local variables
                     "img_len": 25 // we define the range as variable so we can use it in the text
                 },
@@ -45,7 +46,7 @@ survey specification:
                     // ... pages to repeat ...
                     {
                         "lines": [
-                            "image {ix} / {img_len}", // displays: image 0 / 25
+                            "image {ix_next} / {img_len}", // displays: image 1 / 25
                             [ "img", "path/to/image{ix}.png", "" ] // the image to display
                         ],
                         "pid": "question:{ix}" // the id for the page

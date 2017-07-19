@@ -35,7 +35,7 @@ else:
     basestring = basestring
 
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 
 def get_server(addr, port, full_spec, output):
@@ -99,16 +99,27 @@ def get_server(addr, port, full_spec, output):
         if "post" in args:
             with token_lock:
                 tobj = token_obj(token)
+
+                def set_value(o, k, v):
+                    if ":" not in k:
+                        o[k] = v
+                        return
+                    kix = k.index(":")
+                    tmp = k[:kix]
+                    if tmp not in o:
+                        o[tmp] = {}
+                    set_value(o[tmp], k[kix + 1:], v)
+
                 pobj = args["post"]
                 pid = pobj["_pid"]
                 for (k, v) in pobj.items():
                     if k == "_pid":
                         continue
-                    tobj["{0}:{1}".format(pid, k)] = v
+                    set_value(tobj, "{0}:{1}".format(pid, k), v)
                 write_token(token, tobj)
         pix = int(args["query"]["pix"])
         url = "?pix={0}&token={1}".format(pix + 1, token)
-        res, last_page = create_page(spec, pix, url, token, title)
+        res, _pid, last_page = create_page(spec, pix, url, token, title)
         if last_page:
             msg("{0} finished!", token)
         return Response(res, ctype="text/html")
@@ -150,8 +161,18 @@ def get_rev_file(new_name):
 
 
 def dry_run(spec):
+    pids = set()
+    has_last_page = False
     for (pix, s) in enumerate(spec):
-        create_page(spec, pix, "NOPE", "ANON", "DRY")
+        _res, pid, last_page = create_page(spec, pix, "NOPE", "ANON", "DRY")
+        if not has_last_page: # only check reachable pages
+            if pid in pids:
+                raise ValueError("duplicate pid '{0}'".format(pid))
+            pids.add(pid)
+        if last_page:
+            has_last_page = True
+    if not has_last_page:
+        raise ValueError("survey has no last page!")
 
 
 def create_page(spec, pix, url, token, title):
@@ -241,7 +262,7 @@ def create_page(spec, pix, url, token, title):
             }};
         </script>
     </body>
-    """.format(url, content, pid, ask_unload, f(title)), last_page
+    """.format(url, content, pid, ask_unload, f(title)), pid, last_page
 
 
 def read_spec(spec):
@@ -255,10 +276,24 @@ def read_spec(spec):
             if pt == 'each':
                 var = p.get("vars", {})
                 var.update(variables)
-                name = p["name"].format(**var)
-                for ix in range(int(str(p.get("from", 0)).format(**var)), int(p["to"].format(**var))):
+
+                def f(s):
+                    return str(s).format(**var)
+
+                name = f(p["name"])
+                name_next = p.get("name_next", None)
+                if name_next is not None:
+                    name_next = f(name_next)
+                name_prev = p.get("name_prev", None)
+                if name_prev is not None:
+                    name_prev = f(name_prev)
+                for ix in range(int(f(p.get("from", 0))), int(f(p["to"]))):
                     cur_var = var.copy()
                     cur_var[name] = ix
+                    if name_next is not None:
+                        cur_var[name_next] = ix + 1
+                    if name_prev is not None:
+                        cur_var[name_prev] = ix - 1
                     for np in flatten(p, cur_var):
                         yield np
             else:

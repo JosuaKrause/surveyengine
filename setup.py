@@ -27,7 +27,7 @@ if sys.version_info < (2, 7):
     req.append('argparse')
 setup(
     name='surveyengine',
-    version='0.0.2',
+    version='0.0.3',
     description='surveyengine is a customizable survey web user interface.',
     long_description=long_description,
     url='https://github.com/JosuaKrause/surveyengine',
