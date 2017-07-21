@@ -178,16 +178,109 @@ def dry_run(spec):
     #     raise ValueError("survey has no last page!")
 
 
+class HTMLPage(object):
+    def __init__(self, base, url):
+        self._base = base
+        self._url = url
+        self._content = ""
+
+    def append(self, s):
+        self._content += str(s)
+
+    def __iadd__(self, s):
+        self.append(s)
+        return self
+
+    def finish(self, **args):
+        return self._base.format(url=self._url, content=self._content, **args)
+
+
+class Tag(object):
+    def __init__(self, page, name, styles={}, attrs={}):
+        self._page = page
+        self._name = name
+        self._styles = styles
+        self._attrs = attrs
+
+    def _get_styles(self):
+        if not len(self._styles.items()):
+            return ""
+        return " style=\"{0}\"".format('; '.join([
+            "{0}: {1}".format(k, v)
+            for (k, v) in self._styles.items()
+            if v is not None
+        ]))
+
+    def _get_attrs(self):
+        if not len(self._attrs.items()):
+            return ""
+        return " {0}".format(' '.join([
+            "{0}=\"{1}\"".format(k, v)
+            for (k, v) in self._attrs.items()
+            if v is not None
+        ]))
+
+    def no_close(self):
+        self._page += "<{0}{1}{2}>".format(
+            self._name, self._get_styles(), self._get_attrs())
+
+    def append(self, s):
+        self._page.append(s)
+
+    def __iadd__(self, s):
+        self._page += str(s)
+        return self
+
+    def __enter__(self):
+        self.no_close()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self._page += "</{0}>".format(self._name)
+        return False
+
+
 def create_page(spec, pix, url, token, tobj, title):
-    p = spec[pix]
-    pt = p.get("type", "plain")
-    var = p["vars"].copy()
+    content = HTMLPage("""<!DOCTYPE html>
+    <head>
+        <title>{title}</title>
+        <style>
+            * {{
+                box-sizing: border-box;
+                font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
+                font-size: 16px;
+                line-height: 1.42857143;
+            }}
+        </style>
+    </head>
+    <body style="height: 100vh; width: 100vw; margin: 0; padding: 0;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column;">
+            <div style="flex-grow: 0; flex-shrink: 0;">
+                <form id="main_form" action="{url}" method="post">
+                {content}
+                <input type="hidden" value="{pid}" name="_pid"></input>
+                </form>
+            </div>
+            <div style="flex-grow: 0.5; flex-shrink: 1;">
+            </div>
+        </div>
+        <script>
+            {js}
+            document.getElementById("main_form").onsubmit = () => {{
+                window.onbeforeunload = null;
+            }};
+        </script>
+    </body>
+    """, url)
+    page = spec[pix]
+    pt = page.get("type", "plain")
+    var = page["vars"].copy()
     var["token"] = token
 
     def f(s):
         return str(s).format(**var)
 
-    pid = f(p.get("pid", "p{0}".format(pix)))
+    pid = f(page.get("pid", "p{0}".format(pix)))
 
     def flatten_items(tobj, prefix, query):
         qu = query.split('/', 1) if query is not None else [ None ]
@@ -205,84 +298,105 @@ def create_page(spec, pix, url, token, tobj, title):
 
     var.update(dict(flatten_items(tobj, "cur/", pid)))
 
-    content = ""
-    if pt != 'plain':
-        raise ValueError("unknown type: '{0}'".format(pt))
-    for line in p["lines"]:
-        if isinstance(line, basestring):
-            content += "<p>{0}</p>".format(f(line))
-            continue
-        lt, text, lid = line
-        if lt == 'img':
-            content += """<img src="img/{0}" style="text-align: center;">""".format(
-                                            get_file(f(text)))
-            continue
-        content += "<p>{0}</p>".format(f(text))
-        if lt == 'likert':
-            content += "<p style=\"text-align: center; white-space: nowrap;\">"
-            for v in range(5):
-                content += """
-                <input name="{0}" type="radio" value="{1}"{2}></input>
-                <label for="{0}">{1}</label>""".format(
-                        lid,
-                        v - 2,
-                        " checked=\"checked\"" if v == 2 else ""
-                    )
-            content += "</p>"
-        elif lt == 'text':
-            pass
-        else:
-            raise ValueError("unknown line type: '{0}'".format(lt))
-    con = p.get("continue", "next")
-    content += """<p></p><p style="text-align: center; white-space: nowrap;">"""
-    last_page = False
-    if con == 'end':
-        content += ""
-        last_page = True
-    elif con == 'next':
-        content += """<input type="submit" name="_nop_res" value="Next"></input>""".format(url)
-        pass
-    elif con == 'choice':
-        for ch in p["values"]:
-            content += """<input type="submit" name="res" value="{0}"></input>""".format(ch)
+    def interpret_lines(content, lines):
+        if isinstance(lines, basestring):
+            with open(f(lines), "r") as f_in:
+                lines = f_in.readlines()
+        for line in lines:
+            if isinstance(line, basestring):
+                with Tag(content, "p") as p:
+                    p.append(f(line))
+                continue
+            lt, text, lid = line
+            if lt == 'img':
+                Tag(content, "img", attrs={
+                    'src': 'img/{0}'.format(get_file(f(text))),
+                }, styles={
+                    'text-align': 'center',
+                }).no_close()
+                continue
+            with Tag(content, "p") as p:
+                    p.append(f(text))
+            if lt == 'likert':
+                with Tag(content, "p", styles={
+                            'text-align': 'center',
+                            'white-space': 'nowrap',
+                        }) as p:
+                    for v in range(5):
+                        with Tag(p, "input", attrs={
+                                    'name': lid,
+                                    'type': 'radio',
+                                    'value': v - 2,
+                                    'checked': 'checked' if v == 2 else None,
+                                }) as _:
+                            pass
+                        with Tag(p, "label", attrs={
+                                    'for': lid,
+                                }) as l:
+                            l.append(v - 2)
+            elif lt == 'text':
+                pass
+            else:
+                raise ValueError("unknown line type: '{0}'".format(lt))
+
+    if pt == 'plain':
+        interpret_lines(content, page["lines"])
+    elif pt == 'twocolumn':
+        with Tag(content, "div", styles={
+                    'float': 'left',
+                    'width': '45vw',
+                    'height': '80vh',
+                    'overflow-y': 'auto',
+                    'margin-right': '10px',
+                }) as d:
+            interpret_lines(d, page["left"])
+        with Tag(content, "div", styles={
+                    'float': 'right',
+                    'width': '45vw',
+                    'height': '80vh',
+                    'overflow-y': 'auto',
+                    'padding-left': '10px',
+                    'border-left': 'black 1px solid',
+                }) as d:
+            interpret_lines(d, page["right"])
+        with Tag(content, "div", styles={
+                    'clear': 'both',
+                }) as d:
+            interpret_lines(d, page["bottom"])
     else:
-        raise ValueError("unknown continue: '{0}'".format(con))
-    content += "</p>"
+        raise ValueError("unknown type: '{0}'".format(pt))
+    con = page.get("continue", "next")
+    with Tag(content, "p") as _:
+        pass
+    with Tag(content, "p", styles={
+                'text-align': 'center',
+                'white-space': 'nowrap',
+            }) as p:
+        last_page = False
+        if con == 'end':
+            last_page = True
+        elif con == 'next':
+            with Tag(p, "input", attrs={
+                        'type': 'submit',
+                        'name': '_nop_res',
+                        'value': 'Next',
+                    }) as _:
+                pass
+        elif con == 'choice':
+            for ch in page["values"]:
+                with Tag(p, "input", attrs={
+                            'type': 'submit',
+                            'name': 'res',
+                            'value': ch,
+                        }) as _:
+                    pass
+        else:
+            raise ValueError("unknown continue: '{0}'".format(con))
     ask_unload = """window.onbeforeunload = (e) => {
             e.returnValue = "Data you have entered might not be saved. Continue closing?";
             return e.returnValue;
         }""" if not last_page else ""
-    return """<!DOCTYPE html>
-    <head>
-        <title>{4}</title>
-        <style>
-            * {{
-                box-sizing: border-box;
-                font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
-                font-size: 16px;
-                line-height: 1.42857143;
-            }}
-        </style>
-    </head>
-    <body style="height: 100vh; width: 100vw; margin: 0; padding: 0;">
-        <div style="display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column;">
-            <div style="flex-grow: 0; flex-shrink: 0;">
-                <form id="main_form" action="{0}" method="post">
-                {1}
-                <input type="hidden" value="{2}" name="_pid"></input>
-                </form>
-            </div>
-            <div style="flex-grow: 0.5; flex-shrink: 1;">
-            </div>
-        </div>
-        <script>
-            {3}
-            document.getElementById("main_form").onsubmit = () => {{
-                window.onbeforeunload = null;
-            }};
-        </script>
-    </body>
-    """.format(url, content, pid, ask_unload, f(title)), pid, last_page
+    return content.finish(pid=pid, js=ask_unload, title=f(title)), pid, last_page
 
 
 def read_spec(spec):
