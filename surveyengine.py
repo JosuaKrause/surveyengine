@@ -302,6 +302,7 @@ def create_page(spec, pix, url, token, tobj, title):
         if isinstance(lines, basestring):
             with open(f(lines), "r") as f_in:
                 lines = f_in.readlines()
+                lines = [ json.loads(line) for line in lines ]
         for line in lines:
             if isinstance(line, basestring):
                 with Tag(content, "p") as p:
