@@ -38,16 +38,14 @@ survey specification:
             }, {
                 "type": "each", // repeats a sequence of pages
                 "name": "ix", // the iteration variable name -- it can be used via {ix} in fields
-                "name_next": "ix_next", // "name_next" and "name_prev" are optional variables containing the next / previous iteration
-                "vars": { // defines local variables
-                    "img_len": 25 // we define the range as variable so we can use it in the text
-                },
-                "to": "{img_len}", // iterate until this number
+                "name_pos": "pos", // "name_pos" is an optional variable containing the readable position of the iteration
+                "name_count": "count", // "name_count" is an optional variable containing the length of the iteration
+                "to": "2", // iterate until this number
                 "pages": [
                     // ... pages to repeat ...
                     {
                         "lines": [
-                            "image {ix_next} / {img_len}", // displays: image 1 / 25
+                            "image {pos} / {count}", // displays: image 1 / 25
                             [ "img", "path/to/image{ix}.png", "" ] // the image to display
                         ],
                         "pid": "question/{ix}" // the id for the page

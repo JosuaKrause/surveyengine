@@ -409,33 +409,41 @@ def read_spec(spec):
         for p in layer["pages"]:
             pt = p.get("type", "plain")
             if pt == 'each':
-                var = p.get("vars", {})
-                var.update(variables)
+                var = variables.copy()
+                var.update(p.get("vars", {}))
 
                 def f(s):
                     return str(s).format(**var)
 
                 name = f(p["name"])
-                name_next = p.get("name_next", None)
-                if name_next is not None:
-                    name_next = f(name_next)
-                name_prev = p.get("name_prev", None)
-                if name_prev is not None:
-                    name_prev = f(name_prev)
-                for ix in range(int(f(p.get("from", 0))), int(f(p["to"]))):
+                name_pos = p.get("name_pos", None)
+                if name_pos is not None:
+                    name_pos = f(name_pos)
+                name_count = p.get("name_count", None)
+                if name_count is not None:
+                    name_count = f(name_count)
+                if "ixs" in p:
+                    with open(f(p["ixs"]), "r") as f_in:
+                        ixs = f_in.readlines()
+                        ixs = [ int(ix) for ix in ixs ]
+                else:
+                    ixs = list(range(int(f(p.get("from", 0))), int(f(p["to"]))))
+                pos = 0
+                for ix in ixs:
+                    pos += 1
                     cur_var = var.copy()
                     cur_var[name] = ix
-                    if name_next is not None:
-                        cur_var[name_next] = ix + 1
-                    if name_prev is not None:
-                        cur_var[name_prev] = ix - 1
+                    if name_pos is not None:
+                        cur_var[name_pos] = pos
+                    if name_count is not None:
+                        cur_var[name_count] = len(ixs)
                     for np in flatten(p, cur_var):
                         yield np
             else:
                 p = p.copy()
-                if "vars" not in p:
-                    p["vars"] = {}
-                p["vars"].update(variables)
+                tvar = variables.copy()
+                tvar.update(p.get("vars", {}))
+                p["vars"] = tvar
                 yield p
 
     title = sobj.get("title", "Survey")
